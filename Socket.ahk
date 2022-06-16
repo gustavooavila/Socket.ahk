@@ -1,11 +1,17 @@
-class Socket
+#Include %A_LineFile%\..\lib\EventEmitter\EventEmitter.ahk
+
+class Socket extends EventEmitter
 {
 	static WM_SOCKET := 0x9987, MSG_PEEK := 2
 	static FD_READ := 1, FD_ACCEPT := 8, FD_CLOSE := 32
 	static Blocking := True, BlockSleep := 50
 	
+    messageQueue := []
+    timerRunning := False
+    timerInterval := 20
 	__New(Socket:=-1)
 	{
+        base.__new()
 		static Init
 		if (!Init)
 		{
@@ -18,6 +24,8 @@ class Socket
 			Init := True
 		}
 		this.Socket := Socket
+        
+        this.timer := ObjBindMethod(this, "Worker")
 	}
 	
 	__Delete()
@@ -25,7 +33,35 @@ class Socket
 		if (this.Socket != -1)
 			this.Disconnect()
 	}
-	
+    
+	 Worker()
+    {
+        message := this.messageQueue.RemoveAt(1)
+        address := message.address
+        length := message.length
+        if(this.messageQueue.Length() < 1)
+        {
+            timer := this.timer
+            SetTimer, %timer%, Off
+            this.timerRunning := False
+        }
+        this.onRecv(address, length)
+        this.emit("received", address, length)
+    }
+    
+    Enqueue(ByRef address, length)
+    {        
+        this.messageQueue.Push({address: address, length: length})
+        if(!this.timerRunning)
+        {
+            timer := this.timer
+            interval := this.timerInterval
+            SetTimer, %timer%, %interval%
+            
+            this.timerRunning := True
+        }
+    }
+    
 	Connect(Address)
 	{
 		if (this.Socket != -1)
@@ -181,11 +217,21 @@ class Socket
 		if (Msg != this.WM_SOCKET || wParam != this.Socket)
 			return
 		if (lParam & this.FD_READ)
-			this.onRecv()
+        {
+            length := this.Recv(message)
+            this.Enqueue(message, length) ; emits: "received" calls: "OnRecv"
+        }
 		else if (lParam & this.FD_ACCEPT)
-			this.onAccept()
-		else if (lParam & this.FD_CLOSE)
-			this.EventProcUnregister(), this.OnDisconnect()
+        {
+            this.onAccept()
+			this.emit("accept")
+		}
+        else if (lParam & this.FD_CLOSE) 
+        {
+			this.EventProcUnregister()
+            this.emit("disconnect")
+            this.OnDisconnect()
+        }
 	}
 	
 	EventProcRegister(lEvent)
